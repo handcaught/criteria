@@ -1,0 +1,169 @@
+name: CRI-83 Darwin sandbox reproduction
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Ref under test'
+        required: true
+        default: 'origin/main'
+
+jobs:
+  reproduce:
+    runs-on: macos-latest
+    env:
+      CRITERIA_ADAPTERS: ${{ github.workspace }}/bin
+    steps:
+      - name: Check out ref
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.inputs.ref }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Gather runner environment
+        run: |
+          mkdir -p /tmp/cri83-evidence
+          sw_vers > /tmp/cri83-evidence/sw_vers.txt
+          (which sandbox-exec && sandbox-exec -v 2>&1 || echo "sandbox-exec not found or no -v") >> /tmp/cri83-evidence/sw_vers.txt
+          echo "TMPDIR=$TMPDIR" >> /tmp/cri83-evidence/sw_vers.txt
+          echo "PATH=$PATH" >> /tmp/cri83-evidence/sw_vers.txt
+
+      - name: SBPL UDS bind probe
+        run: |
+          mkdir -p /tmp/cri83-evidence
+          cat > /tmp/cri83-without.sb <<'EOF'
+          (version 1)
+          (import "system.sb")
+          (deny default)
+          (allow process-fork)
+          (allow file-read* (subpath "/"))
+          (allow file-write* (subpath "/private/tmp"))
+          EOF
+
+          cat > /tmp/cri83-with.sb <<'EOF'
+          (version 1)
+          (import "system.sb")
+          (deny default)
+          (allow process-fork)
+          (allow file-read* (subpath "/"))
+          (allow file-write* (subpath "/private/tmp"))
+          (allow network-bind)
+          EOF
+
+          cat > /tmp/probe.go <<'EOF'
+          package main
+          import (
+              "fmt"
+              "net"
+              "os"
+          )
+          func main() {
+              path := os.Args[1]
+              _ = os.Remove(path)
+              l, err := net.Listen("unix", path)
+              if err != nil {
+                  fmt.Fprintln(os.Stderr, err)
+                  os.Exit(1)
+              }
+              defer l.Close()
+              fmt.Println("ok")
+          }
+          EOF
+
+          echo "=== probe unsandboxed ===" | tee /tmp/cri83-evidence/sbpl-probe.log
+          go run /tmp/probe.go /tmp/cri83-probe-unsandboxed.sock 2>&1 | tee -a /tmp/cri83-evidence/sbpl-probe.log
+          echo "unsandboxed_exit=${PIPESTATUS[0]}" >> /tmp/cri83-evidence/sbpl-probe.log
+
+          echo "=== without network-bind ===" | tee -a /tmp/cri83-evidence/sbpl-probe.log
+          sandbox-exec -f /tmp/cri83-without.sb /usr/bin/env bash -c "go run /tmp/probe.go /tmp/cri83-probe-denied.sock" 2>&1 | tee -a /tmp/cri83-evidence/sbpl-probe.log
+          echo "without_network_bind_exit=${PIPESTATUS[0]}" >> /tmp/cri83-evidence/sbpl-probe.log
+
+          echo "=== with network-bind ===" | tee -a /tmp/cri83-evidence/sbpl-probe.log
+          sandbox-exec -f /tmp/cri83-with.sb /usr/bin/env bash -c "go run /tmp/probe.go /tmp/cri83-probe-allowed.sock" 2>&1 | tee -a /tmp/cri83-evidence/sbpl-probe.log
+          echo "with_network_bind_exit=${PIPESTATUS[0]}" >> /tmp/cri83-evidence/sbpl-probe.log
+
+          echo "=== TCP bounding: listen under network-bind only ===" | tee -a /tmp/cri83-evidence/sbpl-probe.log
+          cat > /tmp/tcp-listen.go <<'EOF'
+          package main
+          import (
+              "fmt"
+              "net"
+              "os"
+          )
+          func main() {
+              l, err := net.Listen("tcp", "127.0.0.1:0")
+              if err != nil {
+                  fmt.Fprintln(os.Stderr, err)
+                  os.Exit(1)
+              }
+              fmt.Println("ok", l.Addr())
+              _ = l.Close()
+          }
+          EOF
+          sandbox-exec -f /tmp/cri83-with.sb /usr/bin/env bash -c "go run /tmp/tcp-listen.go" 2>&1 | tee -a /tmp/cri83-evidence/sbpl-probe.log
+          echo "tcp_listen_with_network_bind_exit=${PIPESTATUS[0]}" >> /tmp/cri83-evidence/sbpl-probe.log
+
+      - name: Build Criteria and adapter plugins
+        run: |
+          make build
+          make plugins || true
+
+      - name: Write repro workflow
+        run: |
+          cat > /tmp/cri83-repro.hcl <<'EOF'
+          workflow {
+            name    = "cri-83-uds-repro"
+            version = "0.1"
+            initial_state = "run"
+            target_state  = "done"
+          }
+
+          environment "sandbox" "macos" {
+            os = "darwin"
+            filesystem = {
+              write = ["/tmp"]
+            }
+            network = {
+              allow_egress = false
+            }
+          }
+
+          adapter "noop" "default" {
+            environment = sandbox.macos
+          }
+
+          step "run" {
+            target = adapter.noop.default
+            input {}
+            outcome "success" { next = state.done }
+          }
+
+          state "done" { terminal = true }
+          EOF
+
+      - name: Run Criteria end-to-end with TMPDIR=/tmp
+        run: |
+          mkdir -p /tmp/cri83-evidence
+          export TMPDIR=/tmp
+          ./bin/criteria apply --allow-unsigned /tmp/cri83-repro.hcl 2>&1 | tee /tmp/cri83-evidence/criteria-apply-tmp.log
+          echo "criteria_tmp_exit=${PIPESTATUS[0]}" >> /tmp/cri83-evidence/criteria-apply-tmp.log
+
+      - name: Run Criteria end-to-end with default TMPDIR
+        run: |
+          mkdir -p /tmp/cri83-evidence
+          unset TMPDIR
+          ./bin/criteria apply --allow-unsigned /tmp/cri83-repro.hcl 2>&1 | tee /tmp/cri83-evidence/criteria-apply-default-tmp.log
+          echo "criteria_default_tmp_exit=${PIPESTATUS[0]}" >> /tmp/cri83-evidence/criteria-apply-default-tmp.log
+
+      - name: Upload evidence
+        uses: actions/upload-artifact@v7
+        with:
+          name: cri-83-evidence-${{ github.run_id }}-${{ github.event.inputs.ref }}
+          path: /tmp/cri83-evidence/
+          retention-days: 30
+          if-no-files-found: error
