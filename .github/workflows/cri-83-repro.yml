@@ -42,6 +42,9 @@ jobs:
           (import "system.sb")
           (deny default)
           (allow process-fork)
+          (allow process-exec
+            (literal "/bin/bash")
+          )
           (allow file-read* (subpath "/"))
           (allow file-write* (subpath "/private/tmp"))
           EOF
@@ -51,6 +54,9 @@ jobs:
           (import "system.sb")
           (deny default)
           (allow process-fork)
+          (allow process-exec
+            (literal "/bin/bash")
+          )
           (allow file-read* (subpath "/"))
           (allow file-write* (subpath "/private/tmp"))
           (allow network-bind)
