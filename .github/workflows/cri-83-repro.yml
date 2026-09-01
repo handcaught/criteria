@@ -75,6 +75,9 @@ jobs:
           EOF
           GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build -o /tmp/cri83-probe/uds /tmp/cri83-probe/uds.go
           GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build -o /tmp/cri83-probe/tcp /tmp/cri83-probe/tcp.go
+          # Code-sign the probe binaries ad-hoc so the dynamic linker and sandbox-exec accept them.
+          codesign -s - -f /tmp/cri83-probe/uds || true
+          codesign -s - -f /tmp/cri83-probe/tcp || true
           echo "probe_bin_dir=/tmp/cri83-probe" > /tmp/cri83-evidence/probe-build.log
           ls -la /tmp/cri83-probe >> /tmp/cri83-evidence/probe-build.log
           file /tmp/cri83-probe/uds /tmp/cri83-probe/tcp >> /tmp/cri83-evidence/probe-build.log
