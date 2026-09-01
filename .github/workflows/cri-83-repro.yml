@@ -87,11 +87,11 @@ jobs:
           echo "unsandboxed_exit=${PIPESTATUS[0]}" >> /tmp/cri83-evidence/sbpl-probe.log
 
           echo "=== without network-bind ===" | tee -a /tmp/cri83-evidence/sbpl-probe.log
-          sandbox-exec -f /tmp/cri83-without.sb /usr/bin/env bash -c "go run /tmp/probe.go /tmp/cri83-probe-denied.sock" 2>&1 | tee -a /tmp/cri83-evidence/sbpl-probe.log
+          sandbox-exec -f /tmp/cri83-without.sb /bin/bash -c "go run /tmp/probe.go /tmp/cri83-probe-denied.sock" 2>&1 | tee -a /tmp/cri83-evidence/sbpl-probe.log
           echo "without_network_bind_exit=${PIPESTATUS[0]}" >> /tmp/cri83-evidence/sbpl-probe.log
 
           echo "=== with network-bind ===" | tee -a /tmp/cri83-evidence/sbpl-probe.log
-          sandbox-exec -f /tmp/cri83-with.sb /usr/bin/env bash -c "go run /tmp/probe.go /tmp/cri83-probe-allowed.sock" 2>&1 | tee -a /tmp/cri83-evidence/sbpl-probe.log
+          sandbox-exec -f /tmp/cri83-with.sb /bin/bash -c "go run /tmp/probe.go /tmp/cri83-probe-allowed.sock" 2>&1 | tee -a /tmp/cri83-evidence/sbpl-probe.log
           echo "with_network_bind_exit=${PIPESTATUS[0]}" >> /tmp/cri83-evidence/sbpl-probe.log
 
           echo "=== TCP bounding: listen under network-bind only ===" | tee -a /tmp/cri83-evidence/sbpl-probe.log
@@ -112,7 +112,7 @@ jobs:
               _ = l.Close()
           }
           EOF
-          sandbox-exec -f /tmp/cri83-with.sb /usr/bin/env bash -c "go run /tmp/tcp-listen.go" 2>&1 | tee -a /tmp/cri83-evidence/sbpl-probe.log
+          sandbox-exec -f /tmp/cri83-with.sb /bin/bash -c "go run /tmp/tcp-listen.go" 2>&1 | tee -a /tmp/cri83-evidence/sbpl-probe.log
           echo "tcp_listen_with_network_bind_exit=${PIPESTATUS[0]}" >> /tmp/cri83-evidence/sbpl-probe.log
 
       - name: Build Criteria and adapter plugins
