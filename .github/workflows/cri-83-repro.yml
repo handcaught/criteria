@@ -86,12 +86,11 @@ jobs:
       - name: SBPL UDS bind probe
         run: |
           mkdir -p /tmp/cri83-evidence
-          # Place binaries under /private/tmp (real path) so the sandbox literal matches.
+          # On macOS /tmp is a firmlink to /private/tmp; use the real path so sandbox-exec literal matching works.
           PROBE_DIR=/private/tmp/cri83-probe
           mkdir -p "$PROBE_DIR"
-          cp /tmp/cri83-probe/uds "$PROBE_DIR/uds"
-          cp /tmp/cri83-probe/tcp "$PROBE_DIR/tcp"
-          chmod +x "$PROBE_DIR/uds" "$PROBE_DIR/tcp"
+          # /tmp/cri83-probe already resolves to the same directory, so just chmod and use it.
+          chmod +x "$PROBE_DIR/uds" "$PROBE_DIR/tcp" || true
 
           cat > /tmp/cri83-without.sb <<EOF
           (version 1)
