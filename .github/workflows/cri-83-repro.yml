@@ -77,6 +77,7 @@ jobs:
           GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build -o /tmp/cri83-probe/tcp /tmp/cri83-probe/tcp.go
           echo "probe_bin_dir=/tmp/cri83-probe" > /tmp/cri83-evidence/probe-build.log
           ls -la /tmp/cri83-probe >> /tmp/cri83-evidence/probe-build.log
+          file /tmp/cri83-probe/uds /tmp/cri83-probe/tcp >> /tmp/cri83-evidence/probe-build.log
 
       - name: SBPL UDS bind probe
         run: |
@@ -121,10 +122,11 @@ jobs:
           echo "tcp_listen_with_network_bind_exit=${PIPESTATUS[0]}" >> /tmp/cri83-evidence/sbpl-probe.log
 
           echo "=== file-create bounding under network-bind only ===" | tee -a /tmp/cri83-evidence/sbpl-probe.log
-          sandbox-exec -f /tmp/cri83-with.sb /bin/touch /tmp/cri83-probe-touch 2>&1 | tee -a /tmp/cri83-evidence/sbpl-probe.log
+          /usr/bin/touch /tmp/cri83-probe-touch-outside
+          sandbox-exec -f /tmp/cri83-with.sb /usr/bin/touch /tmp/cri83-probe-touch-inside 2>&1 | tee -a /tmp/cri83-evidence/sbpl-probe.log
           echo "touch_exit=${PIPESTATUS[0]}" >> /tmp/cri83-evidence/sbpl-probe.log
-          sandbox-exec -f /tmp/cri83-with.sb /bin/ls /tmp/cri83-probe-touch 2>&1 | tee -a /tmp/cri83-evidence/sbpl-probe.log
-          echo "ls_touch_exit=${PIPESTATUS[0]}" >> /tmp/cri83-evidence/sbpl-probe.log
+          sandbox-exec -f /tmp/cri83-with.sb /usr/bin/stat /tmp/cri83-probe-touch-inside 2>&1 | tee -a /tmp/cri83-evidence/sbpl-probe.log
+          echo "stat_touch_exit=${PIPESTATUS[0]}" >> /tmp/cri83-evidence/sbpl-probe.log
 
       - name: Build Criteria and adapter plugins
         run: |
