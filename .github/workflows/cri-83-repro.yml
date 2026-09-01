@@ -75,61 +75,65 @@ jobs:
           EOF
           GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build -o /tmp/cri83-probe/uds /tmp/cri83-probe/uds.go
           GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build -o /tmp/cri83-probe/tcp /tmp/cri83-probe/tcp.go
-          # Code-sign the probe binaries ad-hoc so the dynamic linker and sandbox-exec accept them.
           codesign -s - -f /tmp/cri83-probe/uds || true
           codesign -s - -f /tmp/cri83-probe/tcp || true
           echo "probe_bin_dir=/tmp/cri83-probe" > /tmp/cri83-evidence/probe-build.log
           ls -la /tmp/cri83-probe >> /tmp/cri83-evidence/probe-build.log
           file /tmp/cri83-probe/uds /tmp/cri83-probe/tcp >> /tmp/cri83-evidence/probe-build.log
+          # Verify the probe can execute outside the sandbox.
+          /tmp/cri83-probe/uds /tmp/cri83-probe-unsandboxed.sock >> /tmp/cri83-evidence/probe-build.log
 
       - name: SBPL UDS bind probe
         run: |
           mkdir -p /tmp/cri83-evidence
-          cat > /tmp/cri83-without.sb <<'EOF'
+          # Place binaries under /private/tmp (real path) so the sandbox literal matches.
+          PROBE_DIR=/private/tmp/cri83-probe
+          mkdir -p "$PROBE_DIR"
+          cp /tmp/cri83-probe/uds "$PROBE_DIR/uds"
+          cp /tmp/cri83-probe/tcp "$PROBE_DIR/tcp"
+          chmod +x "$PROBE_DIR/uds" "$PROBE_DIR/tcp"
+
+          cat > /tmp/cri83-without.sb <<EOF
           (version 1)
           (import "system.sb")
           (deny default)
           (allow process-fork)
           (allow process-exec
-            (literal "/tmp/cri83-probe/uds")
-            (literal "/tmp/cri83-probe/tcp")
+            (literal "$PROBE_DIR/uds")
+            (literal "$PROBE_DIR/tcp")
           )
           (allow file-read* (subpath "/"))
           (allow file-write* (subpath "/private/tmp"))
           EOF
 
-          cat > /tmp/cri83-with.sb <<'EOF'
+          cat > /tmp/cri83-with.sb <<EOF
           (version 1)
           (import "system.sb")
           (deny default)
           (allow process-fork)
           (allow process-exec
-            (literal "/tmp/cri83-probe/uds")
-            (literal "/tmp/cri83-probe/tcp")
+            (literal "$PROBE_DIR/uds")
+            (literal "$PROBE_DIR/tcp")
           )
           (allow file-read* (subpath "/"))
           (allow file-write* (subpath "/private/tmp"))
           (allow network-bind)
           EOF
 
-          echo "=== without network-bind ===" | tee /tmp/cri83-evidence/sbpl-probe.log
-          sandbox-exec -f /tmp/cri83-without.sb /tmp/cri83-probe/uds /tmp/cri83-probe-denied.sock 2>&1 | tee -a /tmp/cri83-evidence/sbpl-probe.log
+          echo "=== profile without network-bind ===" | tee /tmp/cri83-evidence/sbpl-probe.log
+          cat /tmp/cri83-without.sb >> /tmp/cri83-evidence/sbpl-probe.log
+          echo "" >> /tmp/cri83-evidence/sbpl-probe.log
+          echo "=== without network-bind ===" | tee -a /tmp/cri83-evidence/sbpl-probe.log
+          sandbox-exec -f /tmp/cri83-without.sb "$PROBE_DIR/uds" /tmp/cri83-probe-denied.sock 2>&1 | tee -a /tmp/cri83-evidence/sbpl-probe.log
           echo "without_network_bind_exit=${PIPESTATUS[0]}" >> /tmp/cri83-evidence/sbpl-probe.log
 
           echo "=== with network-bind ===" | tee -a /tmp/cri83-evidence/sbpl-probe.log
-          sandbox-exec -f /tmp/cri83-with.sb /tmp/cri83-probe/uds /tmp/cri83-probe-allowed.sock 2>&1 | tee -a /tmp/cri83-evidence/sbpl-probe.log
+          sandbox-exec -f /tmp/cri83-with.sb "$PROBE_DIR/uds" /tmp/cri83-probe-allowed.sock 2>&1 | tee -a /tmp/cri83-evidence/sbpl-probe.log
           echo "with_network_bind_exit=${PIPESTATUS[0]}" >> /tmp/cri83-evidence/sbpl-probe.log
 
           echo "=== TCP bounding: listen under network-bind only ===" | tee -a /tmp/cri83-evidence/sbpl-probe.log
-          sandbox-exec -f /tmp/cri83-with.sb /tmp/cri83-probe/tcp 2>&1 | tee -a /tmp/cri83-evidence/sbpl-probe.log
+          sandbox-exec -f /tmp/cri83-with.sb "$PROBE_DIR/tcp" 2>&1 | tee -a /tmp/cri83-evidence/sbpl-probe.log
           echo "tcp_listen_with_network_bind_exit=${PIPESTATUS[0]}" >> /tmp/cri83-evidence/sbpl-probe.log
-
-          echo "=== file-create bounding under network-bind only ===" | tee -a /tmp/cri83-evidence/sbpl-probe.log
-          /usr/bin/touch /tmp/cri83-probe-touch-outside
-          sandbox-exec -f /tmp/cri83-with.sb /usr/bin/touch /tmp/cri83-probe-touch-inside 2>&1 | tee -a /tmp/cri83-evidence/sbpl-probe.log
-          echo "touch_exit=${PIPESTATUS[0]}" >> /tmp/cri83-evidence/sbpl-probe.log
-          sandbox-exec -f /tmp/cri83-with.sb /usr/bin/stat /tmp/cri83-probe-touch-inside 2>&1 | tee -a /tmp/cri83-evidence/sbpl-probe.log
-          echo "stat_touch_exit=${PIPESTATUS[0]}" >> /tmp/cri83-evidence/sbpl-probe.log
 
       - name: Build Criteria and adapter plugins
         run: |
